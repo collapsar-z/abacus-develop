@@ -195,13 +195,9 @@ int main(int argc, char** argv)
         std::cout << npw << "," << nband << "," << sparsity << ","
                   << nproc << "," << omp_threads << "," << niter << ","
                   << elapsed_ms << "," << max_error;
-        if (n_extra > 0)
+        if (n_extra > 0 || block_size > 0)
         {
-            std::cout << "," << n_extra;
-        }
-        if (block_size > 0)
-        {
-            std::cout << "," << block_size;
+            std::cout << "," << n_extra << "," << block_size;
         }
         std::cout << std::endl;
     }
