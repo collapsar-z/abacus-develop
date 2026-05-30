@@ -3,6 +3,7 @@
 
 #include "source_base/macros.h"
 #include "source_base/module_device/types.h"
+#include "source_hsolver/diago_orthogonalizer.h"
 
 #include <complex>
 #include <functional>
@@ -124,6 +125,8 @@ class DiagoPPCG
 
     /// Block sizes for the blocked PPCG variant; empty means per-band mode
     std::vector<int> block_sizes;
+    /// Shared helper for orthogonalization, projection and subspace rotations.
+    DiagoOrthogonalizer<T, Device> orthogonalizer;
 
   public:
     /**
@@ -196,47 +199,6 @@ class DiagoPPCG
     void calc_hpsi(const HPsiFunc& hpsi_func, T* psi_in, std::vector<T>& hpsi_out) const;
 
     /**
-     * @brief Orthonormalize psi and hpsi using Modified Gram-Schmidt.
-     *
-     * @note psi_in and hpsi_in are modified in-place, column by column.
-     * Aborts if linear dependence is detected (norm <= 1e-14).
-     */
-    void modified_gram_schmidt(T* psi_in, std::vector<T>& hpsi_in) const;
-
-    /**
-     * @brief Orthonormalize psi and hpsi using Cholesky decomposition of the overlap matrix.
-     *
-     * Computes S = <psi|psi>, factorizes S = L * L^H, then rotates vectors by L^{-1}.
-     * More numerically robust than Gram-Schmidt for large block sizes or near-linear-dependence.
-     */
-    void orth_cholesky(T* psi_in, std::vector<T>& hpsi_in);
-
-    /**
-     * @brief Verify orthonormality of the working vectors.
-     *
-     * @return true if the Frobenius norm of (S - I) < 1e-6, false otherwise.
-     */
-    bool check_orthonormality(T* psi_in) const;
-
-    /**
-     * @brief Rotate a block of vectors by a coefficient matrix: block_out = block * coeff.
-     *
-     * @param block Input/output block of vectors [dim: n_basis x n_work, column major].
-     * @param coeff Rotation coefficient matrix [dim: n_work x n_work, column major].
-     * @param workspace Workspace buffer [dim: n_basis x n_work, column major].
-     */
-    void rotate_block(T* block, const std::vector<T>& coeff, std::vector<T>& workspace) const;
-
-    /**
-     * @brief Perform the Rayleigh-Ritz procedure.
-     *
-     * Builds the subspace Hamiltonian Hsub = <psi|H|psi>, diagonalizes it
-     * via LAPACK zheevd, and rotates psi and hpsi by the eigenvectors.
-     * On exit, eigenvalues are sorted ascending.
-     */
-    void rayleigh_ritz(T* psi_in, std::vector<T>& hpsi_in);
-
-    /**
      * @brief Compute the preconditioned residual and eigenvalue for each band.
      *
      * For each non-locked band, computes:
@@ -248,14 +210,6 @@ class DiagoPPCG
      * Locked bands have their w vector zeroed.
      */
     void calc_preconditioned_residual(T* psi_in);
-
-    /**
-     * @brief Project block vectors onto the orthogonal complement of the current subspace.
-     *
-     * For each vector v in block, subtracts its projection onto all current psi vectors:
-     * v_i = v_i - sum_j <x_j | v_i> * x_j
-     */
-    void project_to_orthogonal_complement(T* psi_in, std::vector<T>& block) const;
 
     /**
      * @brief Solve a small generalized eigenvalue problem H * C = lambda * S * C.

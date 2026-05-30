@@ -47,6 +47,7 @@ void DiagoPPCG<T, Device>::init_iter(const int nband, const int nband_l, const i
     this->err.assign(this->n_work, std::numeric_limits<Real>::max());
     this->is_locked.assign(this->n_work, false);
     this->converge_count.assign(this->n_work, 0);
+    this->orthogonalizer.set_dimensions(this->n_basis, this->n_dim, this->n_work);
 }
 
 template <typename T, typename Device>
@@ -127,135 +128,6 @@ void DiagoPPCG<T, Device>::calc_hpsi(const HPsiFunc& hpsi_func, T* psi_in, std::
 }
 
 template <typename T, typename Device>
-void DiagoPPCG<T, Device>::modified_gram_schmidt(T* psi_in, std::vector<T>& hpsi_in) const
-{
-    // Modified Gram-Schmidt: for each column, subtract projections onto all
-    // previous columns from both psi and hpsi, then normalize both.
-    for (int ib = 0; ib < this->n_work; ++ib)
-    {
-        T* xi = psi_in + ib * this->n_basis;
-        T* hxi = hpsi_in.data() + ib * this->n_basis;
-        for (int jb = 0; jb < ib; ++jb)
-        {
-            const T* xj = psi_in + jb * this->n_basis;
-            const T* hxj = hpsi_in.data() + jb * this->n_basis;
-            const T coeff = this->inner_product(xj, xi);
-            this->axpy_vector(xi, xj, -coeff);
-            this->axpy_vector(hxi, hxj, -coeff);
-        }
-
-        const Real norm = this->vector_norm(xi);
-        if (norm <= Real(1.0e-14))
-        {
-            ModuleBase::WARNING_QUIT("DiagoPPCG::modified_gram_schmidt", "linear dependent wavefunctions");
-        }
-        this->scale_vector(xi, Real(1) / norm);
-        this->scale_vector(hxi, Real(1) / norm);
-    }
-}
-
-template <typename T, typename Device>
-void DiagoPPCG<T, Device>::orth_cholesky(T* psi_in, std::vector<T>& hpsi_in)
-{
-    // Cholesky-based orthonormalization:
-    //   1. Build overlap matrix S = <psi|psi>
-    //   2. Cholesky factorize S = U^H * U (LAPACK potrf, upper)
-    //   3. Compute U^{-1} (LAPACK trtri, upper, non-unit)
-    //   4. Rotate psi and hpsi by U^{-1}, yielding orthonormal vectors.
-    std::vector<T> s(this->n_work * this->n_work, T(0));
-    for (int col = 0; col < this->n_work; ++col)
-    {
-        for (int row = 0; row < this->n_work; ++row)
-        {
-            s[row + col * this->n_work]
-                = this->inner_product(psi_in + row * this->n_basis, psi_in + col * this->n_basis);
-        }
-    }
-
-    ct::kernels::lapack_potrf<T, ct::DEVICE_CPU>()('U', this->n_work, s.data(), this->n_work);
-
-    for (int col = 0; col < this->n_work; ++col)
-    {
-        for (int row = col + 1; row < this->n_work; ++row)
-        {
-            s[row + col * this->n_work] = T(0);
-        }
-    }
-
-    ct::kernels::lapack_trtri<T, ct::DEVICE_CPU>()('U', 'N', this->n_work, s.data(), this->n_work);
-
-    this->rotate_block(psi_in, s, this->work);
-    this->rotate_block(hpsi_in.data(), s, this->work);
-}
-
-template <typename T, typename Device>
-bool DiagoPPCG<T, Device>::check_orthonormality(T* psi_in) const
-{
-    // Compute the Frobenius norm of (S - I) where S_ij = <psi_i | psi_j>.
-    // Returns true if the deviation from identity is below 1e-6.
-    Real frob2 = 0;
-    for (int col = 0; col < this->n_work; ++col)
-    {
-        for (int row = 0; row < this->n_work; ++row)
-        {
-            const T s = this->inner_product(psi_in + row * this->n_basis, psi_in + col * this->n_basis);
-            const T delta = s - static_cast<T>(row == col ? 1.0 : 0.0);
-            frob2 += std::norm(delta);
-        }
-    }
-    return std::sqrt(frob2) < Real(1e-1);
-}
-
-template <typename T, typename Device>
-void DiagoPPCG<T, Device>::rotate_block(T* block, const std::vector<T>& coeff, std::vector<T>& workspace) const
-{
-    // Rotate a block of vectors by a coefficient matrix: block_out = block_in * coeff.
-    // coeff is (n_work x n_work) column-major; each output column is a linear
-    // combination of input columns weighted by the corresponding column of coeff.
-    std::fill(workspace.begin(), workspace.end(), T(0));
-    for (int out = 0; out < this->n_work; ++out)
-    {
-        T* dst = workspace.data() + out * this->n_basis;
-        for (int in = 0; in < this->n_work; ++in)
-        {
-            const T* src = block + in * this->n_basis;
-            const T c = coeff[in + out * this->n_work];
-            for (int ig = 0; ig < this->n_dim; ++ig)
-            {
-                dst[ig] += src[ig] * c;
-            }
-        }
-    }
-    std::copy(workspace.begin(), workspace.end(), block);
-}
-
-template <typename T, typename Device>
-void DiagoPPCG<T, Device>::rayleigh_ritz(T* psi_in, std::vector<T>& hpsi_in)
-{
-    // Rayleigh-Ritz: build subspace Hamiltonian Hsub = <psi|H|psi>,
-    // diagonalize it (LAPACK zheevd), then rotate psi and hpsi by the
-    // eigenvectors to obtain Ritz vectors sorted by ascending eigenvalue.
-    if (this->n_work == 0)
-    {
-        return;
-    }
-
-    std::vector<T> hsub(this->n_work * this->n_work, T(0));
-    for (int col = 0; col < this->n_work; ++col)
-    {
-        for (int row = 0; row < this->n_work; ++row)
-        {
-            hsub[row + col * this->n_work]
-                = this->inner_product(psi_in + row * this->n_basis, hpsi_in.data() + col * this->n_basis);
-        }
-    }
-
-    ct::kernels::lapack_heevd<T, ct::DEVICE_CPU>()(this->n_work, hsub.data(), this->n_work, this->eigen.data());
-    this->rotate_block(psi_in, hsub, this->work);
-    this->rotate_block(hpsi_in.data(), hsub, this->work);
-}
-
-template <typename T, typename Device>
 void DiagoPPCG<T, Device>::calc_preconditioned_residual(T* psi_in)
 {
     // For each working band:
@@ -290,23 +162,6 @@ void DiagoPPCG<T, Device>::calc_preconditioned_residual(T* psi_in)
         for (int ig = this->n_dim; ig < this->n_basis; ++ig)
         {
             wi[ig] = T(0);
-        }
-    }
-}
-
-template <typename T, typename Device>
-void DiagoPPCG<T, Device>::project_to_orthogonal_complement(T* psi_in, std::vector<T>& block) const
-{
-    // For each vector v_i in block, subtract its projection onto all current psi
-    // vectors: v_i = v_i - sum_j <x_j | v_i> * x_j.
-    for (int ib = 0; ib < this->n_work; ++ib)
-    {
-        T* vi = block.data() + ib * this->n_basis;
-        for (int jb = 0; jb < this->n_work; ++jb)
-        {
-            const T* xj = psi_in + jb * this->n_basis;
-            const T coeff = this->inner_product(xj, vi);
-            this->axpy_vector(vi, xj, -coeff);
         }
     }
 }
@@ -657,8 +512,8 @@ int DiagoPPCG<T, Device>::diag(const HPsiFunc& hpsi_func,
         // Initial setup: compute H|psi>, orthonormalize, then Rayleigh-Ritz to get
         // the best possible starting basis from the initial guess.
         this->calc_hpsi(hpsi_func, psi_in, this->hpsi);
-        this->modified_gram_schmidt(psi_in, this->hpsi);
-        this->rayleigh_ritz(psi_in, this->hpsi);
+        this->orthogonalizer.modified_gram_schmidt(psi_in, this->hpsi);
+        this->orthogonalizer.rayleigh_ritz(psi_in, this->hpsi, this->eigen, this->work);
 
         // PPCG main iteration loop.
         // Each iteration:
@@ -727,8 +582,8 @@ int DiagoPPCG<T, Device>::diag(const HPsiFunc& hpsi_func,
             }
 
             // Step 4: project W and P to the orthogonal complement of current psi.
-            this->project_to_orthogonal_complement(psi_in, this->w);
-            this->project_to_orthogonal_complement(psi_in, this->p);
+            this->orthogonalizer.project_to_orthogonal_complement(psi_in, this->w);
+            this->orthogonalizer.project_to_orthogonal_complement(psi_in, this->p);
 
             // Step 5: apply Hamiltonian to W and P.
             this->calc_hpsi(hpsi_func, this->w.data(), this->hw);
@@ -742,17 +597,17 @@ int DiagoPPCG<T, Device>::diag(const HPsiFunc& hpsi_func,
             // Between scheduled cycles, check orthonormality and re-orthonormalize on demand.
             if ((iter + 1) % 15 == 0)
             {
-                this->orth_cholesky(psi_in, this->hpsi);
-                this->rayleigh_ritz(psi_in, this->hpsi);
+                this->orthogonalizer.orth_cholesky(psi_in, this->hpsi, this->work);
+                this->orthogonalizer.rayleigh_ritz(psi_in, this->hpsi, this->eigen, this->work);
             }
-            else if (!this->check_orthonormality(psi_in))
+            else if (!this->orthogonalizer.check_orthonormality(psi_in))
             {
-                this->orth_cholesky(psi_in, this->hpsi);
+                this->orthogonalizer.orth_cholesky(psi_in, this->hpsi, this->work);
             }
         }
 
         // Final Rayleigh-Ritz to ensure eigenvalues and vectors are optimal in the subspace.
-        this->rayleigh_ritz(psi_in, this->hpsi);
+        this->orthogonalizer.rayleigh_ritz(psi_in, this->hpsi, this->eigen, this->work);
         std::copy(this->eigen.begin(), this->eigen.begin() + this->n_band_l, eigenvalue_in);
 
         ModuleBase::timer::end("DiagoPPCG", "diag");
