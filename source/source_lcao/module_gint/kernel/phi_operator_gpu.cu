@@ -478,3 +478,7 @@ template class PhiOperatorGpu<double>;
 template class PhiOperatorGpu<float>;
 
 }
+
+// Pull in the kernel definitions+instantiations so everything lives in one TU
+// (avoids CUDA cross-TU template-kernel linkage issues)
+#include "phi_operator_kernel.cu"

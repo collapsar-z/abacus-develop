@@ -63,7 +63,7 @@ int main(int argc, char** argv)
     int npw = (argc > 1) ? std::atoi(argv[1]) : 100;
     int nband = (argc > 2) ? std::atoi(argv[2]) : 10;
     int sparsity = (argc > 3) ? std::atoi(argv[3]) : 6;
-    double ethr = (argc > 4) ? std::atof(argv[4]) : 1e-7;
+    double ethr = (argc > 4) ? std::atof(argv[4]) : 1e-3;
     int n_extra = (argc > 5) ? std::atoi(argv[5]) : 0;
     int block_size = (argc > 6) ? std::atoi(argv[6]) : 0;
 

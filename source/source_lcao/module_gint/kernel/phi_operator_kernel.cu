@@ -181,7 +181,7 @@ __global__ void set_phi_dphi_kernel(
                 }
                 const int iw_l = atom_iw2_l[it_nw + iw];
                 const int idx_ylm = atom_iw2_ylm [it_nw + iw];
-                const double rl = pow_int(dist, iw_l);
+                const double rl = ::pow_int(dist, iw_l);
                 const double tmprl = tmp / rl;
 
                 // if phi == nullptr, it means that we only need dphi.
@@ -299,7 +299,7 @@ __global__ void set_ddphi_kernel(
                     }
                     const int iw_l = atom_iw2_l[it_nw + iw];
                     const int idx_ylm = atom_iw2_ylm [it_nw + iw];
-                    const double rl = pow_int(dist, iw_l);
+                    const double rl = ::pow_int(dist, iw_l);
                     const double tmprl = tmp / rl;
                     const double tmpdphi_rly = (dtmp - tmp * iw_l / dist) / rl * rly[idx_ylm] / dist;
                     

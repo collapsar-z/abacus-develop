@@ -30,7 +30,6 @@ if(USE_CUDA)
   list(APPEND objects
       kernel/gint_gpu_vars.cpp
       kernel/phi_operator_gpu.cu
-      kernel/phi_operator_kernel.cu
       kernel/set_const_mem.cu
       batch_biggrid.cpp
       gint_vl_gpu.cpp
