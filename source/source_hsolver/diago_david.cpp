@@ -132,7 +132,8 @@ int DiagoDavid<T, Device>::diag_once(const HPsiFunc& hpsi_func,
     ModuleBase::timer::start("DiagoDavid", "diag_once");
 
     // convflag[m] = true if the m th band is converged
-    std::vector<bool> convflag(nband, false);
+    // std::vector<char> avoids data race of packed std::vector<bool> under OpenMP
+    std::vector<char> convflag(nband, 0);
     // unconv[m] store the number of the m th unconverged band
     std::vector<int> unconv(nband);
 
@@ -410,31 +411,39 @@ void DiagoDavid<T, Device>::cal_grad(const HPsiFunc& hpsi_func,
     // vc_ev_vector[nbase] = vc_ev_vector[nbase] * e_temp_cpu
     // now vc_ev_vector[nbase] = - lambda * ev = -lambda * vcc
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) if(notconv > 4)
+#pragma omp parallel if(notconv > 4 && this->device != base_device::GpuDevice)
 #endif
-    for (int m = 0; m < notconv; m++)
     {
-        std::vector<Real> e_temp_cpu(nbase, (-1.0 * this->eigenvalue[unconv[m]]));
-
-        if (this->device == base_device::GpuDevice)
-        {
-#if defined(__CUDA) || defined(__ROCM)
-            Real* e_temp_gpu = nullptr;
-            resmem_var_op()(e_temp_gpu, nbase);
-            syncmem_var_h2d_op()(e_temp_gpu, e_temp_cpu.data(), nbase);
-            ModuleBase::vector_mul_vector_op<T, Device>()(nbase,
-                                                          vc_ev_vector + m * nbase,
-                                                          vc_ev_vector + m * nbase,
-                                                          e_temp_gpu);
-            delmem_var_op()(e_temp_gpu);
+        // Allocate once per thread, refill per iteration to avoid heap contention.
+        std::vector<Real> e_temp_cpu(nbase);
+#ifdef _OPENMP
+#pragma omp for schedule(static)
 #endif
-        }
-        else
+        for (int m = 0; m < notconv; m++)
         {
-            ModuleBase::vector_mul_vector_op<T, Device>()(nbase,
-                                                          vc_ev_vector + m * nbase,
-                                                          vc_ev_vector + m * nbase,
-                                                          e_temp_cpu.data());
+            std::fill(e_temp_cpu.begin(), e_temp_cpu.end(),
+                       (-1.0 * this->eigenvalue[unconv[m]]));
+
+            if (this->device == base_device::GpuDevice)
+            {
+#if defined(__CUDA) || defined(__ROCM)
+                Real* e_temp_gpu = nullptr;
+                resmem_var_op()(e_temp_gpu, nbase);
+                syncmem_var_h2d_op()(e_temp_gpu, e_temp_cpu.data(), nbase);
+                ModuleBase::vector_mul_vector_op<T, Device>()(nbase,
+                                                              vc_ev_vector + m * nbase,
+                                                              vc_ev_vector + m * nbase,
+                                                              e_temp_gpu);
+                delmem_var_op()(e_temp_gpu);
+#endif
+            }
+            else
+            {
+                ModuleBase::vector_mul_vector_op<T, Device>()(nbase,
+                                                              vc_ev_vector + m * nbase,
+                                                              vc_ev_vector + m * nbase,
+                                                              e_temp_cpu.data());
+            }
         }
     }
     //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
@@ -483,7 +492,7 @@ void DiagoDavid<T, Device>::cal_grad(const HPsiFunc& hpsi_func,
     //          T is a diagonal stored in array `precondition`
     // to do preconditioning, divide each column of basis by the corresponding element of precondition
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) if(notconv > 4)
+#pragma omp parallel for schedule(static) if(notconv > 4 && this->device != base_device::GpuDevice)
 #endif
     for (int m = 0; m < notconv; m++)
     {

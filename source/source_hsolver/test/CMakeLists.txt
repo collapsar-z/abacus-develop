@@ -215,36 +215,44 @@ if (ENABLE_MPI)
   endif()
 endif()
 
-  AddTest(
-    TARGET MODULE_HSOLVER_ppcg_bench
-    LIBS parameter  ${math_libs} base psi device container
-    SOURCES diago_ppcg_bench.cpp ../diago_ppcg.cpp ../diago_bpcg.cpp ../para_linear_transform.cpp  ../diago_iter_assist.cpp
+  # Benchmark executables use standalone main(), not GTest — use add_executable directly
+  # so they are not registered as always-passing CTest tests.
+  add_executable(MODULE_HSOLVER_ppcg_bench
+    diago_ppcg_bench.cpp ../diago_ppcg.cpp ../diago_bpcg.cpp ../para_linear_transform.cpp  ../diago_iter_assist.cpp
             ../../source_basis/module_pw/test/test_tool.cpp
             ../../source_hamilt/operator.cpp
             ../../source_pw/module_pwdft/op_pw.cpp
   )
+  target_link_libraries(MODULE_HSOLVER_ppcg_bench PRIVATE parameter ${math_libs} base psi device container Threads::Threads)
+  if(USE_OPENMP)
+    target_link_libraries(MODULE_HSOLVER_ppcg_bench PRIVATE OpenMP::OpenMP_CXX)
+  endif()
 
-  AddTest(
-    TARGET MODULE_HSOLVER_bpcg_bench
-    LIBS parameter  ${math_libs} base psi device container
-    SOURCES bpcg_bench.cpp ../diago_bpcg.cpp ../para_linear_transform.cpp  ../diago_iter_assist.cpp
+  add_executable(MODULE_HSOLVER_bpcg_bench
+    bpcg_bench.cpp ../diago_bpcg.cpp ../para_linear_transform.cpp  ../diago_iter_assist.cpp
             ../../source_basis/module_pw/test/test_tool.cpp
             ../../source_hamilt/operator.cpp
             ../../source_pw/module_pwdft/op_pw.cpp
   )
+  target_link_libraries(MODULE_HSOLVER_bpcg_bench PRIVATE parameter ${math_libs} base psi device container Threads::Threads)
+  if(USE_OPENMP)
+    target_link_libraries(MODULE_HSOLVER_bpcg_bench PRIVATE OpenMP::OpenMP_CXX)
+  endif()
 
-  AddTest(
-    TARGET MODULE_HSOLVER_david_bench
-    LIBS parameter  ${math_libs} base device psi
-    SOURCES diago_david_bench.cpp ../diago_david.cpp ../diago_iter_assist.cpp ../diag_const_nums.cpp
+  add_executable(MODULE_HSOLVER_david_bench
+    diago_david_bench.cpp ../diago_david.cpp ../diago_iter_assist.cpp ../diag_const_nums.cpp
             ../../source_basis/module_pw/test/test_tool.cpp
             ../../source_hamilt/operator.cpp
             ../../source_pw/module_pwdft/op_pw.cpp
   )
+  target_link_libraries(MODULE_HSOLVER_david_bench PRIVATE parameter ${math_libs} base device psi Threads::Threads)
+  if(USE_OPENMP)
+    target_link_libraries(MODULE_HSOLVER_david_bench PRIVATE OpenMP::OpenMP_CXX)
+  endif()
 
 AddTest(
   TARGET MODULE_HSOLVER_openmp_consistency
-  LIBS parameter ${math_libs} base device psi MPI::MPI_CXX
+  LIBS parameter ${math_libs} base device psi MPI::MPI_CXX OpenMP::OpenMP_CXX
   SOURCES diago_openmp_consistency_test.cpp ../diago_bpcg.cpp ../diago_david.cpp ../para_linear_transform.cpp ../diago_iter_assist.cpp ../diag_const_nums.cpp
           ../../source_basis/module_pw/test/test_tool.cpp
           ../../source_hamilt/operator.cpp

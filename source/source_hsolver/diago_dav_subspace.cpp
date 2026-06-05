@@ -15,6 +15,7 @@
 #include "source_hsolver/diag_hs_para.h"
 #include "source_hsolver/kernels/bpcg_kernel_op.h" // normalize_op, precondition_op, apply_eigenvalues_op
 
+#include <algorithm>
 #include <vector>
 
 #ifdef __MPI
@@ -121,7 +122,8 @@ int Diago_DavSubspace<T, Device>::diag_once(const HPsiFunc& hpsi_func,
     std::vector<Real> eigenvalue_iter(this->nbase_x, 0.0);
 
     // convflag[m] = true if the m th band is convergent
-    std::vector<bool> convflag(this->n_band, false);
+    // std::vector<char> avoids data race of packed std::vector<bool> under OpenMP
+    std::vector<char> convflag(this->n_band, 0);
 
     // unconv[m] store the number of the m th unconvergent band
     std::vector<int> unconv(this->n_band);
@@ -641,15 +643,16 @@ void Diago_DavSubspace<T, Device>::diag_zhegvx(const int& nbase,
                 std::vector<std::vector<T>> s_diag(nbase, std::vector<T>(nbase, *this->zero));
 
 #ifdef _OPENMP
-#pragma omp parallel for collapse(2) schedule(static) if(nbase > 32)
+#pragma omp parallel for schedule(static) if(nbase > 32)
 #endif
-                for (size_t i = 0; i < nbase; i++)
+                for (int i = 0; i < nbase; i++)
                 {
-                    for (size_t j = 0; j < nbase; j++)
-                    {
-                        h_diag[i][j] = hcc[i * this->nbase_x + j];
-                        s_diag[i][j] = scc[i * this->nbase_x + j];
-                    }
+                    std::copy(hcc + i * this->nbase_x,
+                              hcc + i * this->nbase_x + nbase,
+                              h_diag[i].begin());
+                    std::copy(scc + i * this->nbase_x,
+                              scc + i * this->nbase_x + nbase,
+                              s_diag[i].begin());
                 }
                 hegvx_op<T, Device>()(this->ctx,
                                       nbase,
@@ -693,15 +696,16 @@ void Diago_DavSubspace<T, Device>::diag_zhegvx(const int& nbase,
                 s_diag.resize(nbase * nbase, *this->zero);
                 vcc_tmp.resize(nbase * nbase, *this->zero);
 #ifdef _OPENMP
-#pragma omp parallel for collapse(2) schedule(static) if(nbase > 32)
+#pragma omp parallel for schedule(static) if(nbase > 32)
 #endif
-                for (size_t i = 0; i < nbase; i++)
+                for (int i = 0; i < nbase; i++)
                 {
-                    for (size_t j = 0; j < nbase; j++)
-                    {
-                        h_diag[i * nbase + j] = hcc[i * this->nbase_x + j];
-                        s_diag[i * nbase + j] = scc[i * this->nbase_x + j];
-                    }
+                    std::copy(hcc + i * this->nbase_x,
+                              hcc + i * this->nbase_x + nbase,
+                              h_diag.begin() + i * nbase);
+                    std::copy(scc + i * this->nbase_x,
+                              scc + i * this->nbase_x + nbase,
+                              s_diag.begin() + i * nbase);
                 }
             }
             diago_hs_para(h_diag.data(),

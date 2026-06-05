@@ -273,21 +273,28 @@ struct precondition_op<T, base_device::DEVICE_CPU> {
                    const Real* eigenvalues)
     {
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) if(notconv > 4)
+#pragma omp parallel if(notconv > 4)
 #endif
-        for (int m = 0; m < notconv; m++)
         {
+            // Each thread allocates its own work buffer once, avoiding
+            // repeated heap allocations and per-iteration contention.
             std::vector<Real> pre(dim, 0.0);
-            for (size_t i = 0; i < dim; i++)
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+            for (int m = 0; m < notconv; m++)
             {
-                Real x = std::abs(precondition[i] - eigenvalues[m]);
-                pre[i] = 0.5 * (1.0 + x + sqrt(1 + (x - 1.0) * (x - 1.0)));
+                for (int i = 0; i < dim; i++)
+                {
+                    Real x = std::abs(precondition[i] - eigenvalues[m]);
+                    pre[i] = 0.5 * (1.0 + x + sqrt(1 + (x - 1.0) * (x - 1.0)));
+                }
+                ModuleBase::vector_div_vector_op<T, base_device::DEVICE_CPU>()(
+                                                                 dim,
+                                                                 psi_iter + (nbase + m) * dim,
+                                                                 psi_iter + (nbase + m) * dim,
+                                                                 pre.data());
             }
-            ModuleBase::vector_div_vector_op<T, base_device::DEVICE_CPU>()(
-                                                             dim,
-                                                             psi_iter + (nbase + m) * dim,
-                                                             psi_iter + (nbase + m) * dim,
-                                                             pre.data());
         }
     }
 };
