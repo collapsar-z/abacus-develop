@@ -29,6 +29,11 @@ ABACUS_DIAGO_AUTO_REPORT=1  # 只输出推荐，不改变实际 solver
 ABACUS_DIAGO_AUTO_SELECT=1  # 使用推荐 solver 覆盖当前 method
 ```
 
+注意：当前 PW 预条件数组在进入 `hamiltSolvePsiK(...)` 之前已经按用户指定的
+`this->method` 计算好。因此实际接入时，`ABACUS_DIAGO_AUTO_SELECT=1` 不应在
+`dav_subspace` 和其它 solver 之间自动切换；这种情况下只输出推荐，并保留当前
+solver，避免使用不一致的 preconditioner。
+
 ## 2. 新增文件
 
 新增：
@@ -197,7 +202,11 @@ if (DiagoAutoSelector::report_enabled() && GlobalV::MY_RANK == 0)
 }
 if (DiagoAutoSelector::auto_select_enabled())
 {
-    effective_method = auto_result.method;
+    const bool crosses_dav_subspace = (this->method == "dav_subspace") != (auto_result.method == "dav_subspace");
+    if (!crosses_dav_subspace)
+    {
+        effective_method = auto_result.method;
+    }
 }
 ```
 

@@ -11,6 +11,8 @@ DiagoTrace 做的事情很小：
 - 默认关闭。
 - 只有设置环境变量 `ABACUS_DIAGO_TRACE=1` 时才写 CSV。
 - 可通过 `ABACUS_DIAGO_TRACE_FILE=xxx.csv` 指定输出文件。
+- 默认只由 `GlobalV::MY_RANK == 0` 写 CSV，避免 MPI 多 rank 并发写坏同一个文件。
+- 如需所有 rank 分别诊断，可设置 `ABACUS_DIAGO_TRACE_ALL_RANKS=1`，文件名会自动变成 `xxx.rankN.csv`。
 - 输出每轮迭代的收敛过程信息。
 
 不要在这一功能里做这些事：
@@ -67,7 +69,7 @@ class DiagoTrace
 
         if (this->file_.tellp() == 0)
         {
-            this->file_ << "solver,iter,nband,max_residual,avg_residual,n_converged,orth_error,note\n";
+            this->file_ << "solver,rank,iter,nband,max_residual,avg_residual,n_converged,orth_error,note\n";
         }
         this->solver_name_ = solver_name;
     }
@@ -91,6 +93,7 @@ class DiagoTrace
             return;
         }
         this->file_ << this->solver_name_ << ','
+                    << GlobalV::MY_RANK << ','
                     << iter << ','
                     << nband << ','
                     << std::setprecision(16) << max_residual << ','
@@ -379,7 +382,7 @@ head diago_trace.csv
 预期 CSV 头：
 
 ```text
-solver,iter,nband,max_residual,avg_residual,n_converged,orth_error,note
+solver,rank,iter,nband,max_residual,avg_residual,n_converged,orth_error,note
 ```
 
 ## 8. 常见坑
@@ -388,4 +391,4 @@ solver,iter,nband,max_residual,avg_residual,n_converged,orth_error,note
 - 不要每轮无条件从 GPU 拷 residual 到 host；必须放在 `trace.enabled()` 内部。
 - Davidson 记录的是 eigenvalue delta，不要硬叫 residual。
 - 如果新分支已经重构了函数名，按“计算 residual 后、收敛判断前后”的语义找插入点。
-- 如果多个 MPI rank 同时写同一个 CSV，可能会有并发写入问题。当前设计主要用于单 rank 或测试场景；如果要用于大规模 MPI benchmark，建议每个 rank 写不同文件名，或只在指定 rank 写。
+- 默认只让 rank 0 写 CSV，避免多个 MPI rank 同时写同一个文件。需要排查 rank 间差异时，再开启 `ABACUS_DIAGO_TRACE_ALL_RANKS=1`。
